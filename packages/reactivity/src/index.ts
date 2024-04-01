@@ -1,14 +1,14 @@
 export {
   ref,
-  shallowRef,
+  shallowRef, // 去掉
   isRef,
-  toRef,
-  toValue,
-  toRefs,
-  unref,
-  proxyRefs,
-  customRef,
-  triggerRef,
+  toRef, // 去掉
+  toValue, // 去掉
+  toRefs, // 去掉
+  unref, // 去掉
+  proxyRefs, // 去掉
+  customRef, // 去掉
+  triggerRef, // 去掉
   type Ref,
   type MaybeRef,
   type MaybeRefOrGetter,
@@ -22,14 +22,14 @@ export {
 } from './ref'
 export {
   reactive,
-  readonly,
+  readonly, // 去掉
   isReactive,
-  isReadonly,
-  isShallow,
-  isProxy,
-  shallowReactive,
-  shallowReadonly,
-  markRaw,
+  isReadonly, // 去掉
+  isShallow, // 去掉
+  isProxy, // 去掉
+  shallowReactive, // 去掉
+  shallowReadonly, // 去掉
+  markRaw, // 去掉
   toRaw,
   type Raw,
   type DeepReadonly,
@@ -64,7 +64,7 @@ export {
 } from './effect'
 export { trigger, track, ITERATE_KEY } from './reactiveEffect'
 export {
-  effectScope,
+  effectScope, // 待定
   EffectScope,
   getCurrentScope,
   onScopeDispose,
