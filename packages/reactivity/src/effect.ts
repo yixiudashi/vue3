@@ -289,7 +289,7 @@ export function triggerEffects(
     ) {
       effect.trigger() // 这里只是明确当前副作用的触发，而非真正的运行，与computed/customeRef 有关
       if (
-        (!effect._runnings || effect.allowRecurse)) { // 正在运行的副作用函数，不会再次触发将当前副作用函数的调度器加入队列，除非明确允许递归
+        (!effect._runnings || effect.allowRecurse)) { // 正在运行的副作用函数，不会再次触发将当前副作用函数加入队列，除非明确允许递归
         effect._shouldSchedule = false
         if (effect.scheduler) {
           queueEffectSchedulers.push(effect.scheduler) // 将副作用函数的调度器加入队列
