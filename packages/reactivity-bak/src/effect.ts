@@ -40,6 +40,10 @@ export class ReactiveEffect<T = any> {
   allowRecurse?: boolean
 
   onStop?: () => void
+  // dev only
+  onTrack?: (event: DebuggerEvent) => void
+  // dev only
+  onTrigger?: (event: DebuggerEvent) => void
 
   /**
    * @internal
@@ -61,20 +65,19 @@ export class ReactiveEffect<T = any> {
    * @internal
    */
   _depsLength = 0
-  // 此处的trigger和scheduler不能单独理解，
-  // 需要结合场景(computed关联依赖与副作用；vue3中提供的watch执行时机(flush)的处理和异步去重处理等)
-  // 不用一次了解细节, 只需要知道都是为了触发副作用
+
   constructor(
     public fn: () => T,
-    public trigger: () => void, // 用于触发副作用
-    public scheduler?: EffectScheduler, // 用于调度副作用函数
+    public trigger: () => void,
+    public scheduler?: EffectScheduler,
     scope?: EffectScope,
   ) {
     recordEffectScope(this, scope)
   }
 
-  public get dirty() { // 除了 return this._dirtyLevel >= DirtyLevels.Dirty，其他代码都是为了确保计算属性的依赖关系
+  public get dirty() {
     if (
+      this._dirtyLevel === DirtyLevels.MaybeDirty_ComputedSideEffect ||
       this._dirtyLevel === DirtyLevels.MaybeDirty
     ) {
       this._dirtyLevel = DirtyLevels.QueryingDirty
@@ -102,14 +105,14 @@ export class ReactiveEffect<T = any> {
 
   run() {
     this._dirtyLevel = DirtyLevels.NotDirty
-    if (!this.active) { // 副作用已经停止，不在进行依赖的收集管理，直接运行返回
+    if (!this.active) {
       return this.fn()
     }
-    let lastShouldTrack = shouldTrack // 记录当前是否需要追踪副作用依赖的标志位
-    let lastEffect = activeEffect // 记录当前正在运行的副作用
+    let lastShouldTrack = shouldTrack
+    let lastEffect = activeEffect
     try {
-      shouldTrack = true // 为即将执行的副作用追踪依赖
-      activeEffect = this // 标记即将运行的副作用
+      shouldTrack = true
+      activeEffect = this
       this._runnings++
       preCleanupEffect(this)
       return this.fn()
@@ -135,12 +138,12 @@ function triggerComputed(computed: ComputedRefImpl<any>) {
   return computed.value
 }
 
-function preCleanupEffect(effect: ReactiveEffect) { // 为重新记录依赖做准备
+function preCleanupEffect(effect: ReactiveEffect) {
   effect._trackId++
   effect._depsLength = 0
 }
 
-function postCleanupEffect(effect: ReactiveEffect) { // 清理多余的依赖(上一次运行收集的依赖比这次多)
+function postCleanupEffect(effect: ReactiveEffect) {
   if (effect.deps.length > effect._depsLength) {
     for (let i = effect._depsLength; i < effect.deps.length; i++) {
       cleanupDepEffect(effect.deps[i], effect)
@@ -151,15 +154,20 @@ function postCleanupEffect(effect: ReactiveEffect) { // 清理多余的依赖(�
 
 function cleanupDepEffect(dep: Dep, effect: ReactiveEffect) {
   const trackId = dep.get(effect)
-  if (trackId !== undefined && effect._trackId !== trackId) { // 接触依赖与副作用的关系
+  if (trackId !== undefined && effect._trackId !== trackId) {
     dep.delete(effect)
-    if (dep.size === 0) { // 当某个依赖没有任何副作用依赖时，主动清理依赖对应的Dep对象
+    if (dep.size === 0) {
       dep.cleanup()
     }
   }
 }
 
-export interface ReactiveEffectOptions {
+export interface DebuggerOptions {
+  onTrack?: (event: DebuggerEvent) => void
+  onTrigger?: (event: DebuggerEvent) => void
+}
+
+export interface ReactiveEffectOptions extends DebuggerOptions {
   lazy?: boolean
   scheduler?: EffectScheduler
   scope?: EffectScope
@@ -172,6 +180,16 @@ export interface ReactiveEffectRunner<T = any> {
   effect: ReactiveEffect
 }
 
+/**
+ * Registers the given function to track reactive updates.
+ *
+ * The given function will be run once immediately. Every time any reactive
+ * property that's accessed within it gets updated, the function will run again.
+ *
+ * @param fn - The function that will track reactive updates.
+ * @param options - Allows to control the effect's behaviour.
+ * @returns A runner that can be used to control the effect after creation.
+ */
 export function effect<T = any>(
   fn: () => T,
   options?: ReactiveEffectOptions,
@@ -206,10 +224,10 @@ export function stop(runner: ReactiveEffectRunner) {
   runner.effect.stop()
 }
 
-export let shouldTrack = true // 是否需要追踪副作用依赖的标志位
-export let pauseScheduleStack = 0 // 暂停调度次数
+export let shouldTrack = true
+export let pauseScheduleStack = 0
 
-const trackStack: boolean[] = [] // 用于记录副作用收集与否的栈
+const trackStack: boolean[] = []
 
 /**
  * Temporarily pauses tracking.
@@ -235,22 +253,21 @@ export function resetTracking() {
   shouldTrack = last === undefined ? true : last
 }
 
-export function pauseScheduling() { // 暂停调度，确保将所有的副作用函数加入队列
+export function pauseScheduling() {
   pauseScheduleStack++
 }
 
-export function resetScheduling() { // 完成所有的副作用函数的手机后，集中一次性调度
+export function resetScheduling() {
   pauseScheduleStack--
   while (!pauseScheduleStack && queueEffectSchedulers.length) {
     queueEffectSchedulers.shift()!()
   }
 }
 
-// 1.这里承担了副作用相关依赖的更新(条件逻辑下，每次运行完成后的依赖可能不一样)
-// 2.还有当某个依赖没有任何副作用依赖时，主动清理依赖对应的Dep对象
 export function trackEffect(
   effect: ReactiveEffect,
   dep: Dep,
+  debuggerEventExtraInfo?: DebuggerEventExtraInfo,
 ) {
   if (dep.get(effect) !== effect._trackId) {
     dep.set(effect, effect._trackId)
@@ -263,24 +280,26 @@ export function trackEffect(
     } else {
       effect._depsLength++
     }
+    if (__DEV__) {
+      effect.onTrack?.(extend({ effect }, debuggerEventExtraInfo!))
+    }
   }
 }
 
 const queueEffectSchedulers: EffectScheduler[] = []
 
-// 以下代码不用一次了解细节，只需要知道，响应式数据的变化，找到对应的副作用，将副作用函数加入到队列中
-// queueEffectSchedulers.push(effect.scheduler)
 export function triggerEffects(
   dep: Dep,
   dirtyLevel: DirtyLevels,
+  debuggerEventExtraInfo?: DebuggerEventExtraInfo,
 ) {
-  pauseScheduling() // 暂停调度，确保将所有的副作用函数加入队列
+  pauseScheduling()
   for (const effect of dep.keys()) {
     // dep.get(effect) is very expensive, we need to calculate it lazily and reuse the result
     let tracking: boolean | undefined
     if (
-      effect._dirtyLevel < dirtyLevel && // 只有在分析计算属性的时候，_dirtyLevel才有用，一般情况下可以将_dirtyLevel看待为bool值
-      (tracking ??= dep.get(effect) === effect._trackId) // 在副作用函数运行时触发了依赖的变化，避免陷入死循环
+      effect._dirtyLevel < dirtyLevel &&
+      (tracking ??= dep.get(effect) === effect._trackId)
     ) {
       effect._shouldSchedule ||= effect._dirtyLevel === DirtyLevels.NotDirty
       effect._dirtyLevel = dirtyLevel
@@ -289,15 +308,20 @@ export function triggerEffects(
       effect._shouldSchedule &&
       (tracking ??= dep.get(effect) === effect._trackId)
     ) {
-      effect.trigger() // 这里只是明确当前副作用的触发，而非真正的运行，与computed/customeRef 有关
+      if (__DEV__) {
+        effect.onTrigger?.(extend({ effect }, debuggerEventExtraInfo))
+      }
+      effect.trigger()
       if (
-        (!effect._runnings || effect.allowRecurse)) { // 正在运行的副作用函数，不会再次触发将当前副作用函数加入队列，除非明确允许递归
+        (!effect._runnings || effect.allowRecurse) &&
+        effect._dirtyLevel !== DirtyLevels.MaybeDirty_ComputedSideEffect
+      ) {
         effect._shouldSchedule = false
         if (effect.scheduler) {
-          queueEffectSchedulers.push(effect.scheduler) // 将副作用函数的调度器加入队列
+          queueEffectSchedulers.push(effect.scheduler)
         }
       }
     }
   }
-  resetScheduling() // 恢复调度
+  resetScheduling()
 }

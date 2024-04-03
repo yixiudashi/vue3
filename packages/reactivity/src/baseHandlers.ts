@@ -1,13 +1,7 @@
 import {
   type Target,
-  isReadonly,
-  isShallow,
   reactive,
   reactiveMap,
-  readonly,
-  readonlyMap,
-  shallowReactiveMap,
-  shallowReadonlyMap,
   toRaw,
 } from './reactive'
 import { ReactiveFlags, TrackOpTypes, TriggerOpTypes } from './constants'
@@ -28,7 +22,6 @@ import {
   makeMap,
 } from '@vue/shared'
 import { isRef } from './ref'
-import { warn } from './warning'
 
 const isNonTrackableKeys = /*#__PURE__*/ makeMap(`__proto__,__v_isRef,__isVue`)
 
@@ -47,9 +40,8 @@ const arrayInstrumentations = /*#__PURE__*/ createArrayInstrumentations()
 
 function createArrayInstrumentations() {
   const instrumentations: Record<string, Function> = {}
-  // instrument identity-sensitive Array methods to account for possible reactive
-  // values
-  ;(['includes', 'indexOf', 'lastIndexOf'] as const).forEach(key => {
+  // 重写数组的方法，使其能够追踪数组的变化
+  ;(['includes', 'indexOf', 'lastIndexOf'] as const).forEach(key => { // 读取操作，追踪数组上每一个元素包括length
     instrumentations[key] = function (this: unknown[], ...args: unknown[]) {
       const arr = toRaw(this) as any
       for (let i = 0, l = this.length; i < l; i++) {
@@ -67,10 +59,10 @@ function createArrayInstrumentations() {
   })
   // instrument length-altering mutation methods to avoid length being tracked
   // which leads to infinite loops in some cases (#2137)
-  ;(['push', 'pop', 'shift', 'unshift', 'splice'] as const).forEach(key => {
+  ;(['push', 'pop', 'shift', 'unshift', 'splice'] as const).forEach(key => { // 修改操作，触发对应的副作用
     instrumentations[key] = function (this: unknown[], ...args: unknown[]) {
-      pauseTracking()
-      pauseScheduling()
+      pauseTracking() // 暂停追踪, 因为这些方法的修改操作，js内部会有读取操作，不去为这里的读取操作建议依赖追踪
+      pauseScheduling() // 暂停调度，以上操作或导致多次变更，集中一次性调度
       const res = (toRaw(this) as any)[key].apply(this, args)
       resetScheduling()
       resetTracking()
@@ -86,87 +78,42 @@ function hasOwnProperty(this: object, key: string) {
   return obj.hasOwnProperty(key)
 }
 
-class BaseReactiveHandler implements ProxyHandler<Target> {
-  constructor(
-    protected readonly _isReadonly = false,
-    protected readonly _isShallow = false,
-  ) {}
-
+export const mutableHandlers: ProxyHandler<object> = {
   get(target: Target, key: string | symbol, receiver: object) {
-    const isReadonly = this._isReadonly,
-      isShallow = this._isShallow
-    if (key === ReactiveFlags.IS_REACTIVE) {
-      return !isReadonly
-    } else if (key === ReactiveFlags.IS_READONLY) {
-      return isReadonly
-    } else if (key === ReactiveFlags.IS_SHALLOW) {
-      return isShallow
-    } else if (key === ReactiveFlags.RAW) {
-      if (
-        receiver ===
-          (isReadonly
-            ? isShallow
-              ? shallowReadonlyMap
-              : readonlyMap
-            : isShallow
-              ? shallowReactiveMap
-              : reactiveMap
-          ).get(target) ||
-        // receiver is not the reactive proxy, but has the same prototype
-        // this means the reciever is a user proxy of the reactive proxy
-        Object.getPrototypeOf(target) === Object.getPrototypeOf(receiver)
-      ) {
+    if (key === ReactiveFlags.RAW) { // 获取原始对象
+      if (receiver === reactiveMap.get(target)) {
         return target
       }
-      // early return undefined
       return
     }
 
     const targetIsArray = isArray(target)
-
-    if (!isReadonly) {
-      if (targetIsArray && hasOwn(arrayInstrumentations, key)) {
-        return Reflect.get(arrayInstrumentations, key, receiver)
-      }
-      if (key === 'hasOwnProperty') {
-        return hasOwnProperty
-      }
+    if (targetIsArray && hasOwn(arrayInstrumentations, key)) { // 获取数组的方法
+      return Reflect.get(arrayInstrumentations, key, receiver)
     }
+    if (key === 'hasOwnProperty') { // 获取 hasOwnProperty 方法
+      return hasOwnProperty
+    }
+    // 以上不用过多关心，主要是为了处理数组的方法和 hasOwnProperty 方法
 
-    const res = Reflect.get(target, key, receiver)
+    const res = Reflect.get(target, key, receiver) // 获取属性值
 
-    if (isSymbol(key) ? builtInSymbols.has(key) : isNonTrackableKeys(key)) {
+    if (isSymbol(key) ? builtInSymbols.has(key) : isNonTrackableKeys(key)) {// 不需要追踪的属性
       return res
     }
 
-    if (!isReadonly) {
-      track(target, TrackOpTypes.GET, key)
+    track(target, TrackOpTypes.GET, key) // 追踪属性, 将属性与当前运行的副作用关联
+
+    if (isRef(res)) { // reactive里面的ref，自动解包，此特性最初与渲染函数有关，不用过多关心
+      res.value
     }
 
-    if (isShallow) {
-      return res
-    }
-
-    if (isRef(res)) {
-      // ref unwrapping - skip unwrap for Array + integer key.
-      return targetIsArray && isIntegerKey(key) ? res : res.value
-    }
-
-    if (isObject(res)) {
-      // Convert returned value into a proxy as well. we do the isObject check
-      // here to avoid invalid value warning. Also need to lazy access readonly
-      // and reactive here to avoid circular dependency.
-      return isReadonly ? readonly(res) : reactive(res)
+    if (isObject(res)) { // 递归处理，保证所有属性都是响应式的，vue3采用的是按需处理，当获取属性时才会处理
+      return reactive(res)
     }
 
     return res
-  }
-}
-
-class MutableReactiveHandler extends BaseReactiveHandler {
-  constructor(isShallow = false) {
-    super(false, isShallow)
-  }
+  },
 
   set(
     target: object,
@@ -175,57 +122,49 @@ class MutableReactiveHandler extends BaseReactiveHandler {
     receiver: object,
   ): boolean {
     let oldValue = (target as any)[key]
-    if (!this._isShallow) {
-      const isOldValueReadonly = isReadonly(oldValue)
-      if (!isShallow(value) && !isReadonly(value)) {
-        oldValue = toRaw(oldValue)
-        value = toRaw(value)
-      }
-      if (!isArray(target) && isRef(oldValue) && !isRef(value)) {
-        if (isOldValueReadonly) {
-          return false
-        } else {
-          oldValue.value = value
-          return true
-        }
-      }
-    } else {
-      // in shallow mode, objects are set as-is regardless of reactive or not
-    }
 
+    oldValue = toRaw(oldValue)
+    value = toRaw(value)
+
+    // 可不用强行理解细节，此特性最初与渲染函数有关，只需要知道是为了处理ref的情况
+    if (!isArray(target) && isRef(oldValue) && !isRef(value)) {
+      oldValue.value = value
+      return true
+    }
+    // 判断是否有这个属性
     const hadKey =
       isArray(target) && isIntegerKey(key)
         ? Number(key) < target.length
         : hasOwn(target, key)
-    const result = Reflect.set(target, key, value, receiver)
+    const result = Reflect.set(target, key, value, receiver) // 设置属性值
     // don't trigger if target is something up in the prototype chain of original
     if (target === toRaw(receiver)) {
       if (!hadKey) {
-        trigger(target, TriggerOpTypes.ADD, key, value)
+        trigger(target, TriggerOpTypes.ADD, key, value) // 新增属性，触发对应的副作用
       } else if (hasChanged(value, oldValue)) {
-        trigger(target, TriggerOpTypes.SET, key, value, oldValue)
+        trigger(target, TriggerOpTypes.SET, key, value) // 修改属性，触发对应的副作用
       }
     }
     return result
-  }
-
+  },
+  // 删除属性，触发对应的副作用
   deleteProperty(target: object, key: string | symbol): boolean {
     const hadKey = hasOwn(target, key)
-    const oldValue = (target as any)[key]
     const result = Reflect.deleteProperty(target, key)
     if (result && hadKey) {
-      trigger(target, TriggerOpTypes.DELETE, key, undefined, oldValue)
+      trigger(target, TriggerOpTypes.DELETE, key, undefined)
     }
     return result
-  }
-
+  },
+  // 判断是否有这个属性, 追踪属性, 将属性与当前运行的副作用关联
   has(target: object, key: string | symbol): boolean {
     const result = Reflect.has(target, key)
     if (!isSymbol(key) || !builtInSymbols.has(key)) {
       track(target, TrackOpTypes.HAS, key)
     }
     return result
-  }
+  },
+  // 获取属性名列表, 追踪iterate, 将iterate与当前运行的副作用关联
   ownKeys(target: object): (string | symbol)[] {
     track(
       target,
@@ -235,45 +174,3 @@ class MutableReactiveHandler extends BaseReactiveHandler {
     return Reflect.ownKeys(target)
   }
 }
-
-class ReadonlyReactiveHandler extends BaseReactiveHandler {
-  constructor(isShallow = false) {
-    super(true, isShallow)
-  }
-
-  set(target: object, key: string | symbol) {
-    if (__DEV__) {
-      warn(
-        `Set operation on key "${String(key)}" failed: target is readonly.`,
-        target,
-      )
-    }
-    return true
-  }
-
-  deleteProperty(target: object, key: string | symbol) {
-    if (__DEV__) {
-      warn(
-        `Delete operation on key "${String(key)}" failed: target is readonly.`,
-        target,
-      )
-    }
-    return true
-  }
-}
-
-export const mutableHandlers: ProxyHandler<object> =
-  /*#__PURE__*/ new MutableReactiveHandler()
-
-export const readonlyHandlers: ProxyHandler<object> =
-  /*#__PURE__*/ new ReadonlyReactiveHandler()
-
-export const shallowReactiveHandlers = /*#__PURE__*/ new MutableReactiveHandler(
-  true,
-)
-
-// Props handlers are special in the sense that it should not unwrap top-level
-// refs (in order to allow refs to be explicitly passed down), but should
-// retain the reactivity of the normal readonly object.
-export const shallowReadonlyHandlers =
-  /*#__PURE__*/ new ReadonlyReactiveHandler(true)
