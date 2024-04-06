@@ -1,4 +1,5 @@
 import type { ReactiveEffect } from './effect'
+import { warn } from './warning'
 
 let activeEffectScope: EffectScope | undefined
 
@@ -56,6 +57,8 @@ export class EffectScope {
       } finally {
         activeEffectScope = currentEffectScope
       }
+    } else if (__DEV__) {
+      warn(`cannot run an inactive effect scope.`)
     }
   }
 
@@ -145,5 +148,10 @@ export function getCurrentScope() {
 export function onScopeDispose(fn: () => void) {
   if (activeEffectScope) {
     activeEffectScope.cleanups.push(fn)
+  } else if (__DEV__) {
+    warn(
+      `onScopeDispose() is called when there is no active effect scope` +
+        ` to be associated with.`,
+    )
   }
 }

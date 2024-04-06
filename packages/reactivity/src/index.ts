@@ -1,51 +1,51 @@
 export {
   ref,
-  shallowRef,
+  // shallowRef, // 去掉
   isRef,
-  toRef,
-  toValue,
-  toRefs,
-  unref,
-  proxyRefs,
-  customRef,
-  triggerRef,
+  // toRef, // 去掉
+  // toValue, // 去掉
+  // toRefs, // 去掉
+  // unref, // 去掉
+  // proxyRefs, // 去掉
+  // customRef, // 去掉
+  // triggerRef, // 去掉
   type Ref,
-  type MaybeRef,
-  type MaybeRefOrGetter,
-  type ToRef,
-  type ToRefs,
-  type UnwrapRef,
-  type ShallowRef,
-  type ShallowUnwrapRef,
-  type RefUnwrapBailTypes,
-  type CustomRefFactory,
+  // type MaybeRef,
+  // type MaybeRefOrGetter,
+  // type ToRef,
+  // type ToRefs,
+  // type UnwrapRef,
+  // type ShallowRef,
+  // type ShallowUnwrapRef,
+  // type RefUnwrapBailTypes,
+  // type CustomRefFactory,
 } from './ref'
 export {
   reactive,
-  readonly,
+  // readonly, // 去掉
   isReactive,
-  isReadonly,
-  isShallow,
-  isProxy,
-  shallowReactive,
-  shallowReadonly,
-  markRaw,
+  // isReadonly, // 去掉
+  // isShallow, // 去掉
+  // isProxy, // 去掉
+  // shallowReactive, // 去掉
+  // shallowReadonly, // 去掉
+  // markRaw, // 去掉
   toRaw,
   type Raw,
-  type DeepReadonly,
-  type ShallowReactive,
-  type UnwrapNestedRefs,
+  // type DeepReadonly,
+  // type ShallowReactive,
+  // type UnwrapNestedRefs,
 } from './reactive'
 export {
   computed,
   type ComputedRef,
-  type WritableComputedRef,
-  type WritableComputedOptions,
+  // type WritableComputedRef,
+  // type WritableComputedOptions,
   type ComputedGetter,
-  type ComputedSetter,
+  // type ComputedSetter,
   type ComputedRefImpl,
 } from './computed'
-export { deferredComputed } from './deferredComputed'
+// export { deferredComputed } from './deferredComputed'
 export {
   effect,
   stop,
@@ -58,13 +58,13 @@ export {
   type ReactiveEffectRunner,
   type ReactiveEffectOptions,
   type EffectScheduler,
-  type DebuggerOptions,
+  // type DebuggerOptions,
   type DebuggerEvent,
-  type DebuggerEventExtraInfo,
+  // type DebuggerEventExtraInfo,
 } from './effect'
 export { trigger, track, ITERATE_KEY } from './reactiveEffect'
 export {
-  effectScope,
+  effectScope, // 待定
   EffectScope,
   getCurrentScope,
   onScopeDispose,

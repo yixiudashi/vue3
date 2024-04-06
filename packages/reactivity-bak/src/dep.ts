@@ -1,15 +1,14 @@
-import type { ReactiveEffect, ReactiveEffectTrackId } from './effect'
+import type { ReactiveEffect } from './effect'
 import type { ComputedRefImpl } from './computed'
 
-// 记录响应式对应关联的副作用
-export type Dep = Map<ReactiveEffect, ReactiveEffectTrackId> & {
+export type Dep = Map<ReactiveEffect, number> & {
   cleanup: () => void
   computed?: ComputedRefImpl<any>
 }
 
 export const createDep = (
   cleanup: () => void,
-  computed?: ComputedRefImpl<any>, // 计算属性对象
+  computed?: ComputedRefImpl<any>,
 ): Dep => {
   const dep = new Map() as Dep
   dep.cleanup = cleanup

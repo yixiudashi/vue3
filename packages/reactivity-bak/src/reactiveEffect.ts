@@ -32,7 +32,6 @@ export const MAP_KEY_ITERATE_KEY = Symbol(__DEV__ ? 'Map key iterate' : '')
  */
 export function track(target: object, type: TrackOpTypes, key: unknown) {
   if (shouldTrack && activeEffect) {
-    // 生成响应式数据关联的副作用Map: Dep
     let depsMap = targetMap.get(target)
     if (!depsMap) {
       targetMap.set(target, (depsMap = new Map()))
@@ -41,11 +40,16 @@ export function track(target: object, type: TrackOpTypes, key: unknown) {
     if (!dep) {
       depsMap.set(key, (dep = createDep(() => depsMap!.delete(key))))
     }
-    // 将当前Dep与副作用双向关联
-    // 副作用函数再次运行时(由于条件逻辑的影响)，可能导致副作用依赖的变化，方便清除上次关联但是不再需要的依赖
     trackEffect(
       activeEffect,
       dep,
+      __DEV__
+        ? {
+            target,
+            type,
+            key,
+          }
+        : void 0,
     )
   }
 }
@@ -58,12 +62,13 @@ export function track(target: object, type: TrackOpTypes, key: unknown) {
  * @param type - Defines the type of the operation that needs to trigger effects.
  * @param key - Can be used to target a specific reactive property in the target object.
  */
-// 以下代码不用一次了解细节，只需要知道，响应式数据的变化，找到对应的副作用，触发副作用
 export function trigger(
   target: object,
   type: TriggerOpTypes,
   key?: unknown,
   newValue?: unknown,
+  oldValue?: unknown,
+  oldTarget?: Map<unknown, unknown> | Set<unknown>,
 ) {
   const depsMap = targetMap.get(target)
   if (!depsMap) {
@@ -72,14 +77,14 @@ export function trigger(
   }
 
   let deps: (Dep | undefined)[] = []
-  if (type === TriggerOpTypes.CLEAR) { // 清除操作，触发target对应的所有属性的副作用
+  if (type === TriggerOpTypes.CLEAR) {
     // collection being cleared
     // trigger all effects for target
     deps = [...depsMap.values()]
-  } else if (key === 'length' && isArray(target)) { // 部分数组的内置方法会触发length属性的副作用
+  } else if (key === 'length' && isArray(target)) {
     const newLength = Number(newValue)
     depsMap.forEach((dep, key) => {
-      if (key === 'length' || (!isSymbol(key) && key >= newLength)) { // 通过设置小于数组长度的length，删除数组元素
+      if (key === 'length' || (!isSymbol(key) && key >= newLength)) {
         deps.push(dep)
       }
     })
@@ -90,21 +95,20 @@ export function trigger(
     }
 
     // also run for iteration key on ADD | DELETE | Map.SET
-    // 一些操作，额外触发迭代器关联的副作用
     switch (type) {
       case TriggerOpTypes.ADD:
-        if (!isArray(target)) { // 非数组的添加操作，触发迭代器的关联的副作用
+        if (!isArray(target)) {
           deps.push(depsMap.get(ITERATE_KEY))
           if (isMap(target)) {
             deps.push(depsMap.get(MAP_KEY_ITERATE_KEY))
           }
-        } else if (isIntegerKey(key)) { // 数组的添加操作，触发length属性的关联的副作用
+        } else if (isIntegerKey(key)) {
           // new index added to array -> length changes
           deps.push(depsMap.get('length'))
         }
         break
       case TriggerOpTypes.DELETE:
-        if (!isArray(target)) { // 非数组的删除操作，触发迭代器关联的副作用
+        if (!isArray(target)) {
           deps.push(depsMap.get(ITERATE_KEY))
           if (isMap(target)) {
             deps.push(depsMap.get(MAP_KEY_ITERATE_KEY))
@@ -112,19 +116,29 @@ export function trigger(
         }
         break
       case TriggerOpTypes.SET:
-        if (isMap(target)) { // Map的设置操作，触发迭代器关联的副作用
+        if (isMap(target)) {
           deps.push(depsMap.get(ITERATE_KEY))
         }
         break
     }
   }
 
-  pauseScheduling() // 暂停调度，将所有副作用函数推入队列，等待调度
+  pauseScheduling()
   for (const dep of deps) {
     if (dep) {
       triggerEffects(
         dep,
         DirtyLevels.Dirty,
+        __DEV__
+          ? {
+              target,
+              type,
+              key,
+              newValue,
+              oldValue,
+              oldTarget,
+            }
+          : void 0,
       )
     }
   }
